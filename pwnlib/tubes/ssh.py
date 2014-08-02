@@ -3,22 +3,6 @@ from .. import term, log_levels, log, context
 from ..util import hashes, misc
 from . import sock, tube
 
-def _raw_sh_string(s):
-    very_good = set(string.ascii_letters + string.digits)
-    good = (very_good | set(string.punctuation + ' ')) - set("'\\")
-
-    if all(c in very_good for c in s):
-        return s
-    elif all(c in good for c in s):
-        return "'%s'" % s
-    else:
-        fixed = ''
-        for c in s:
-            if c in good:
-                fixed += c
-            else:
-                fixed += '\\x%02x' % ord(c)
-        return '"$((echo %s|(base64 -d||openssl enc -d -base64)||echo -en \'%s\') 2>/dev/null)"' % (base64.b64encode(s), fixed)
 
 class ssh_channel(sock.sock):
     def __init__(self, parent, process = None, tty = False, timeout = 'default', log_level = log_levels.INFO):
@@ -26,11 +10,12 @@ class ssh_channel(sock.sock):
 
         self.returncode = None
         self.host = parent.host
+        self.tty  = tty
 
         h = log.waitfor('Opening new channel: %r' % (process or 'shell'), log_level = self.log_level)
 
         self.sock = parent.transport.open_session()
-        if tty:
+        if self.tty:
             self.sock.get_pty('xterm', term.width, term.height)
 
             def resizer():
@@ -84,16 +69,21 @@ class ssh_channel(sock.sock):
             time.sleep(0.05)
         return False
 
-    def interactive(self, prompt = None):
-        """interactive()
+    def interactive(self, prompt = term.text.bold_red('$') + ' '):
+        """interactive(prompt = pwnlib.term.text.bold_red('$') + ' ')
 
-        Does mostly the same as :meth:`pwnlib.tubes.tube.tube.interactive`,
-        however SSH will typically supply it's own prompt. We also
-        have a few SSH-specific hacks that will ideally be removed
+        If not in TTY-mode, this does exactly the same as
+        meth:`pwnlib.tubes.tube.tube.interactive`, otherwise
+        it does mostly the same.
+
+        An SSH connection in TTY-mode will typically supply its own prompt,
+        thus the prompt argument is ignored in this case.
+        We also have a few SSH-specific hacks that will ideally be removed
         once the :mod:`pwnlib.term` is more mature.
-
-        The prompt argument is ignored.
         """
+
+        if not self.tty:
+            return super(ssh_channel, self).interactive(prompt)
 
         if not term.term_mode:
             log.error("interactive() is not possible outside term_mode")
@@ -266,7 +256,7 @@ class ssh(object):
 
     def _libs_remote(self, remote):
         """Return a dictionary of the libraries used by a remote file."""
-        data, status = self.run_to_end('ldd ' + _raw_sh_string(remote))
+        data, status = self.run_to_end('ldd ' + misc.sh_string(remote))
         if status != 0:
             log.failure('Unable to find libraries for %r' % remote)
             return {}
@@ -274,7 +264,7 @@ class ssh(object):
         return misc.parse_ldd_output(data)
 
     def _get_fingerprint(self, remote):
-        arg = _raw_sh_string(remote)
+        arg = misc.sh_string(remote)
         cmd = '(sha256sum %s||sha1sum %s||md5sum %s) 2>/dev/null' % (arg, arg, arg)
         data, status = self.run_to_end(cmd)
         if status == 0:
@@ -305,7 +295,7 @@ class ssh(object):
             return False
 
     def _download_raw(self, remote, local):
-        total, _ = self.run_to_end('wc -c ' + _raw_sh_string(remote))
+        total, _ = self.run_to_end('wc -c ' + misc.sh_string(remote))
         total = misc.size(int(total.split()[0]))
 
         h = log.waitfor('Downloading %r' % remote, log_level = self.log_level)
@@ -313,7 +303,7 @@ class ssh(object):
         def update(has):
             h.status("%s/%s" % (misc.size(has), total))
 
-        c = self.run('cat ' + _raw_sh_string(remote), log_level = 0)
+        c = self.run('cat ' + misc.sh_string(remote), log_level = 0)
         data = ''
 
         while True:
@@ -385,7 +375,7 @@ class ssh(object):
           data(str): The data to upload.
           remote(str): The filename to upload it to."""
 
-        s = self.run('cat>' + _raw_sh_string(remote), log_level = 0)
+        s = self.run('cat>' + misc.sh_string(remote), log_level = 0)
         s.send(data)
         s.shutdown('out')
         s.recvall()

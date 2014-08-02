@@ -1,6 +1,6 @@
 from .. import log, log_levels, context, term
 from ..util import misc
-import re, threading, sys
+import re, threading, sys, time
 
 def _fix_timeout(timeout, default):
     if timeout == 'default':
@@ -26,7 +26,7 @@ class tube(object):
 
     # Functions based on functions from subclasses
     def recv(self, numb = 4096, timeout = 'default'):
-        """recv(self, numb = 4096, timeout = 'default') -> str
+        """recv(numb = 4096, timeout = 'default') -> str
 
         Receives up to `numb` bytes of data from the socket.
         If a timeout occurs while waiting, it will return None.
@@ -60,7 +60,7 @@ class tube(object):
         return data
 
     def recvpred(self, pred, timeout = 'default'):
-        """recvpred(self, pred, timeout = 'default') -> str
+        """recvpred(pred, timeout = 'default') -> str
 
         Receives one byte at a time from the socket, until ``pred(bytes)``
         evaluates to True.
@@ -102,7 +102,7 @@ class tube(object):
         return res
 
     def recvn(self, numb, timeout = 'default'):
-        """recvn(self, numb, timeout = 'default') -> str
+        """recvn(numb, timeout = 'default') -> str
 
         Wrapper around :func:`recvpred`, which will return after `numb`
         bytes are available.
@@ -111,7 +111,7 @@ class tube(object):
         return self.recvpred(lambda buf: len(buf) >= numb, timeout)
 
     def recvuntil(self, delim, timeout = 'default'):
-        """recvuntil(self, delim, timeout = 'default') -> str
+        """recvuntil(delim, timeout = 'default') -> str
 
         Wrapper around :func:`recvpred`, which will return when the string
         ends with the given delimiter.
@@ -120,7 +120,7 @@ class tube(object):
         return self.recvpred(lambda buf: buf.endswith(delim), timeout)
 
     def recvline(self, lines = 1, timeout = 'default'):
-        """recvline(self, lines = 1, timeout = 'default') -> str
+        """recvline(lines = 1, timeout = 'default') -> str
 
         Wrapper around :func:`recvpred`, which will return then the buffer
         contains ``lines`` number of newlines.
@@ -129,7 +129,7 @@ class tube(object):
         return self.recvpred(lambda buf: buf.count('\n') == lines, timeout)
 
     def recvregex(self, regex, exact = False, timeout = 'default'):
-        """recvregex(self, regex, exact = False, timeout = 'default') -> str
+        """recvregex(regex, exact = False, timeout = 'default') -> str
 
         Wrapper around :func:`recvpred`, which will return when a regex
         matches the string in the buffer.
@@ -148,10 +148,34 @@ class tube(object):
 
         return self.recvpred(pred, timeout)
 
+    def recvrepeat(self, timeout = 'default'):
+        """recvrepeat()
+
+        Receives data until a timeout or EOF is reached."""
+
+        timeout = _fix_timeout(timeout, self.timeout)
+
+        if timeout == None:
+            timeout = 0.1
+
+        r = []
+        while True:
+            try:
+                s = self.recv(10000, timeout = timeout)
+            except EOFError:
+                break
+
+            if s == None:
+                break
+
+            r.append(s)
+
+        return ''.join(r)
+
     def recvall(self):
         """recvall() -> str
 
-        Receives data until the socket is closed.
+        Receives data until EOF is reached.
         """
 
         h = log.waitfor('Recieving all data', log_level = self.log_level)
@@ -198,7 +222,7 @@ class tube(object):
         self.send(line + '\n')
 
     def sendafter(self, delim, data, timeout = 'default'):
-        """sendafter(self, delim, data, timeout = 'default') -> str
+        """sendafter(delim, data, timeout = 'default') -> str
 
         A combination of ``recvuntil(delim, timeout)`` and ``send(data)``."""
 
@@ -207,7 +231,7 @@ class tube(object):
         return res
 
     def sendlineafter(self, delim, data, timeout = 'default'):
-        """sendlineafter(self, delim, data, timeout = 'default') -> str
+        """sendlineafter(delim, data, timeout = 'default') -> str
 
         A combination of ``recvuntil(delim, timeout)`` and ``sendline(data)``."""
 
@@ -216,7 +240,7 @@ class tube(object):
         return res
 
     def sendthen(self, delim, data, timeout = 'default'):
-        """sendthen(self, delim, data, timeout = 'default') -> str
+        """sendthen(delim, data, timeout = 'default') -> str
 
         A combination of ``send(data)`` and ``recvuntil(delim, timeout)``."""
 
@@ -224,7 +248,7 @@ class tube(object):
         return self.recvuntil(delim, timeout)
 
     def sendlinethen(self, delim, data, timeout = 'default'):
-        """sendlinethen(self, delim, data, timeout = 'default') -> str
+        """sendlinethen(delim, data, timeout = 'default') -> str
 
         A combination of ``sendline(data)`` and ``recvuntil(delim, timeout)``."""
 
@@ -232,7 +256,7 @@ class tube(object):
         return self.recvuntil(delim, timeout)
 
     def interactive(self, prompt = term.text.bold_red('$') + ' '):
-        """interactive(self, prompt = pwnlib.term.text.bold_red('$') + ' ')
+        """interactive(prompt = pwnlib.term.text.bold_red('$') + ' ')
 
         Does simultaneous reading and writing to the socket. In principle this just
         connects the socket to standard in and standard out, but in practice this
@@ -287,13 +311,77 @@ class tube(object):
         # Restore
         self.debug_log_level = debug_log_level
 
-    def clean(self):
-        """clean()
+    def clean(self, timeout = 0.05):
+        """clean(timeout = 0.05)
 
-        Removes all the buffered data from a socket. It does this by calling
-        :func:`recv()` until a timeout occurs."""
-        while self.recv(10000, timeout = 0.05) != None:
-            pass
+        Removes all the buffered data from a socket by calling
+        :meth:`pwnlib.tubes.tube.tube.recv` with a low timeout until it fails.
+        """
+
+        self.recvrepeat(timeout = timeout)
+
+    def connect_input(self, other):
+        """connect_input(other)
+
+        Connects the input of this tube to the output of another tube object."""
+
+        def pump():
+            import sys as _sys
+            while True:
+                try:
+                    data = other.recv(timeout = None)
+                except EOFError:
+                    break
+
+                if not _sys:
+                    return
+
+                if data == None:
+                    continue
+
+                try:
+                    self.send(data)
+                except EOFError:
+                    break
+
+                if not _sys:
+                    return
+
+            self.shutdown("out")
+            other.shutdown("in")
+
+        t = threading.Thread(target = pump)
+        t.daemon = True
+        t.start()
+
+    def connect_output(self, other):
+        """connect_output(other)
+
+        Connects the output of this tube to the input of another tube object."""
+
+        other.connect_input(self)
+
+    def connect_both(self, other):
+        """connect_both(other)
+
+        Connects the both ends of this tube object with the writing end another tube object."""
+
+        self.connect_input(other)
+        self.connect_output(other)
+
+    def __lshift__(self, other):
+        self.connect_input(other)
+        return other
+
+    def __rshift(self, other):
+        self.connect_output(other)
+        return other
+
+    def wait(self):
+        """Waits until the socket is closed."""
+
+        while self.connected():
+            time.sleep(0.05)
 
     def can_recv(self, timeout = 0):
         """can_recv(timeout = 0) -> bool
