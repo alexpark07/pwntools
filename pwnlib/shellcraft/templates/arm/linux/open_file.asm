@@ -17,16 +17,16 @@ Args:
 
 %if (int(flags) & 0100) != 0:
 	if mode != None:
-		mov r2, ${int(mode)}
+		mov r2, #${int(mode)}
 %endif
 
-	mov r1, ${int(flags)}
+	mov r1, #${int(flags)}
 	adr r0, ${filename}
 	svc SYS_open
 	b ${after_open}
 ${filename}:
 %if filepath:
 	.asciz "${filepath}\x00"
-%endif
 	.align 2
+%endif
 ${after_open}:

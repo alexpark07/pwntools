@@ -28,6 +28,7 @@ Args:
 	bl ${after_open}
 
 ${filename}:
-		.asciz "${filepath}\x00"
+	.asciz "${filepath}\x00"
+	.align 2
 
 ${after_open}:
