@@ -184,7 +184,7 @@ class tube(object):
         r = []
         while True:
             try:
-                s = self.recv(timeout = None)
+                s = self.recv(timeout = 0.1)
             except EOFError:
                 break
 
@@ -308,6 +308,9 @@ class tube(object):
         except KeyboardInterrupt:
             log.info('Interrupted')
 
+        while t.is_alive():
+            t.join(timeout = 0.1)
+
         # Restore
         self.debug_log_level = debug_log_level
 
@@ -327,8 +330,9 @@ class tube(object):
         data with :meth:`pwnlib.log.info`.
         """
 
-        log.info('Cleaning tube (fileno = %d):' % self.fileno())
-        log.indented(self.recvrepeat(timeout = timeout))
+        if self.connected():
+            log.info('Cleaning tube (fileno = %d):' % self.fileno())
+            log.indented(self.recvrepeat(timeout = timeout))
 
     def connect_input(self, other):
         """connect_input(other)
@@ -393,7 +397,7 @@ class tube(object):
     def __ne__(self, other):
         self << other << self
 
-    def wait(self):
+    def wait_for_close(self):
         """Waits until the socket is closed."""
 
         while self.connected():
