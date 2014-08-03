@@ -9,3 +9,5 @@ build
 MANIFEST
 dist
 pwntools.egg-info
+.gdb_history
+temp
