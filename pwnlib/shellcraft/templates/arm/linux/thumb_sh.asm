@@ -1,11 +1,12 @@
 <% from pwnlib.shellcraft import arm, common %>
 <% from pwnlib.asm import cpp %>
-<%docstring>Execute /bin/sh in thumb mode</%docstring>
+<%docstring>Execute /bin/sh in thumb mode
+
+need to call arm_to_thumb() shellcode first
+</%docstring>
 <%
 	bin_sh = common.label("bin_sh")
 %>
-
-	${arm.arm_to_thumb()}
 
 	adr r0, ${bin_sh}
 	mov r2, #0
