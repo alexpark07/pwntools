@@ -8,12 +8,13 @@ need to call arm_to_thumb() shellcode first
 	bin_sh = common.label("bin_sh")
 %>
 
+	.thumb
 	adr r0, ${bin_sh}
-	mov r2, #0
-	mov r7, ${cpp("SYS_execve", arch = "thumb", os = "linux")}
+	movs r2, #0
+	movs r7, #${cpp("SYS_execve", arch = "thumb", os = "linux")}
 	push {r0, r2}
 	mov r1, sp
 	svc 1
 
 ${bin_sh}:
-	.ascii "/bin/sh"
+	.asciz "/bin/sh\x00"
