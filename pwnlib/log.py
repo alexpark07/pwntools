@@ -49,7 +49,7 @@ def _put(log_level, string = '', frozen = True, float = False, priority = 10, in
             _last_was_nl = True
         if indent:
             string = string[:-1].replace('\n', '\n' + ' ' * indent) + string[-1]
-        sys.stderr.write(string)
+        sys.stdout.write(string)
         return _dummy_handle
 
 
@@ -202,7 +202,7 @@ def warning(string = '', log_level = log_levels.INFO, frozen = True, float = Fal
       A handle to the text, so it can be updated later.
 '''
     if term.term_mode:
-        return _anotate(log_level, text.bold_yello('!'), string,
+        return _anotate(log_level, text.bold_yellow('!'), string,
                         frozen, float, priority, indent)
     else:
         warnings.warn(string, stacklevel = 2)
