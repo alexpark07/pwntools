@@ -5,7 +5,7 @@ from . import sock, tube
 
 
 class ssh_channel(sock.sock):
-    def __init__(self, parent, process = None, tty = False, timeout = 'default', log_level = log_levels.INFO):
+    def __init__(self, parent, process = None, tty = False, wd = None, timeout = 'default', log_level = log_levels.INFO):
         super(ssh_channel, self).__init__(timeout, log_level)
 
         self.returncode = None
@@ -13,6 +13,9 @@ class ssh_channel(sock.sock):
         self.tty  = tty
 
         h = log.waitfor('Opening new channel: %r' % (process or 'shell'), log_level = self.log_level)
+
+        if process and wd:
+            process = "cd %s 2>/dev/null >/dev/null; %s" % (misc.sh_string(wd), process)
 
         self.sock = parent.transport.open_session()
         if self.tty:
@@ -151,6 +154,50 @@ class ssh_channel(sock.sock):
         log.info('Closed SSH channel with %s' % self.host, log_level = self.log_level)
 
 
+class ssh_connecter(sock.sock):
+    def __init__(self, parent, host, port, timeout = 'default', log_level = log_levels.INFO):
+        super(ssh_connecter, self).__init__(timeout, log_level)
+
+        self.host  = parent.host
+        self.rhost = host
+        self.rport = port
+
+        h = log.waitfor('Connecting to %s:%d via SSH to %s' % (self.rhost, self.rport, self.host), log_level = self.log_level)
+        try:
+            self.sock = parent.transport.open_channel('direct-tcpip', (host, port), ('127.0.0.1', 0))
+        except:
+            h.failed()
+            raise
+
+        h.success()
+
+    def _close_msg(self):
+        log.info("Closed remote connection to %s:%d via SSH connection to %s" % (self.fhost, self.fport, self.host))
+
+
+class ssh_listener(sock.sock):
+    def __init__(self, parent, bind_address, port, timeout = 'default', log_level = log_levels.INFO):
+        super(ssh_listener, self).__init__(timeout, log_level)
+
+        self.host = parent.host
+        self.port = port
+
+        h = log.waitfor('Waiting on port %d via SSH to %s' % (self.port, self.host), log_level = self.log_level)
+        try:
+            parent.transport.request_port_forward(bind_address, self.port)
+            self.sock = parent.transport.accept()
+            parent.transport.cancel_port_forward(bind_address, self.port)
+        except:
+            h.failure()
+            raise
+
+        self.rhost, self.rport = self.sock.origin_addr
+        h.success('Got connection from %s:%d' % (self.rhost, self.rport))
+
+    def _close_msg(self):
+        log.info("Closed remote connection to %s:%d via SSH listener on port %d via %s" % (self.rhost, self.rport, self.port, self.host))
+
+
 class ssh(object):
     def __init__(self, user, host, port = 22, password = None, key = None, keyfile = None, proxy_command = None, proxy_sock = None, timeout = 'default', log_level = log_levels.INFO):
         """Creates a new ssh connection.
@@ -173,6 +220,7 @@ class ssh(object):
         self.timeout         = tube._fix_timeout(timeout, context.timeout)
         self.log_level       = log_level
         self._cachedir       = os.path.join(tempfile.gettempdir(), 'pwntools-ssh-cache')
+        self._wd             = None
         misc.mkdir_p(self._cachedir)
 
         keyfiles = [keyfile] if keyfile else []
@@ -213,10 +261,10 @@ class ssh(object):
 
         Return a :class:`pwnlib.tubes.ssh.ssh_channel` object.
         """
-        return self.run(None, tty, timeout, log_level)
+        return self.run(None, tty, None, timeout, log_level)
 
-    def run(self, process, tty = False, timeout = 'default', log_level = 'default'):
-        """run(process, tty = False, timeout = 'default', log_level = 'default') -> ssh_channel
+    def run(self, process, tty = False, wd = 'default', timeout = 'default', log_level = 'default'):
+        """run(process, tty = False, timeout = 'default', log_level = 'default', wd = 'default') -> ssh_channel
 
         Open a new channel with a specific process inside. If `tty` is True,
         then a TTY is requested on the remote server.
@@ -228,20 +276,43 @@ class ssh(object):
 
         timeout = tube._fix_timeout(timeout, self.timeout)
 
-        return ssh_channel(self, process, tty, timeout, log_level)
+        if wd == 'default':
+            wd = self._wd
 
-    def run_to_end(self, process, tty = False):
-        """run_to_end(self, process, tty = False, timeout = 'default') -> str
+        return ssh_channel(self, process, tty, wd, timeout, log_level)
+
+    def run_to_end(self, process, tty = False, wd = 'default'):
+        """run_to_end(process, tty = False, timeout = 'default') -> str
 
         Run a command on the remote server and return a tuple with
         (data, exit_status). If `tty` is True, then the command is run inside
         a TTY on the remote server."""
 
-        c = self.run(process, tty, None, 0)
+        c = self.run(process, tty, wd, None, 0)
         data = c.recvall()
         retcode = c.poll()
         c.close()
         return data, retcode
+
+    def connect_remote(self, host, port, timeout = 'default', log_level = 'default'):
+        """connect_remote(host, port, timeout = 'default', log_level = 'default') -> ssh_connecter
+
+        Connects to a host through an SSH connection. This is equivalent to
+        using the ``-L`` flag on ``ssh``.
+
+        Returns a :class:`pwnlib.tubes.ssh.ssh_connecter` object."""
+
+        return ssh_connecter(self, host, port, timeout, log_level)
+
+    def listen_remote(self, port, bind_address = '', timeout = 'default', log_level = 'default'):
+        """listen_remote(port, bind_address = '', timeout = 'default', log_level = 'default') -> ssh_connecter
+
+        Listens remotely through an SSH connection. This is equivalent to
+        using the ``-R`` flag on ``ssh``.
+
+        Returns a :class:`pwnlib.tubes.ssh.ssh_listener` object."""
+
+        return ssh_listener(self, bind_address, port, timeout, log_level)
 
     def connected(self):
         """Returns True if we are connected."""
@@ -365,6 +436,9 @@ class ssh(object):
         if not local:
             local = os.path.basename(os.path.normpath(remote))
 
+        if self._wd and os.path.basename(remote) == remote:
+            remote = os.path.join(self._wd, remote)
+
         local_tmp = self._download_to_cache(remote)
         shutil.copy2(local_tmp, local)
 
@@ -394,10 +468,16 @@ class ssh(object):
             remote = os.path.normpath(filename)
             remote = os.path.basename(remote)
 
+            if self._wd:
+                remote = os.path.join(self._wd, remote)
+
         with open(filename) as fd:
             data = fd.read()
 
+        log.info("Uploading %r to %r" % (filename,remote))
         self.upload_data(data, remote)
+
+        return remote
 
     def libs(self, remote, directory = None):
         """Downloads the libraries referred to by a file.
@@ -447,3 +527,32 @@ class ssh(object):
         s = self.shell()
         s.interactive()
         s.close()
+
+    def set_working_directory(self, wd = None):
+        """Sets the working directory in which future commands will
+        be run (via ssh.run) and to which files will be uploaded/downloaded
+        from if no path is provided
+
+        Args:
+            wd(string): Working directory.  Default is to auto-generate a directory
+                based on the result of running 'mktemp -d' on the remote machine.
+        """
+        status = 0
+
+        if not wd:
+            wd, status = self.run_to_end('mktemp -d', wd = None)
+            wd = wd.strip()
+
+        if status:
+            log.failure("Could not generate a temporary directory")
+            return
+
+        _, status = self.run_to_end('ls ' + misc.sh_string(wd), wd = None)
+
+        if status:
+            log.failure("%r does not appear to exist" % wd)
+            return
+
+        log.info("Working directory: %r" % wd)
+        self._wd = wd
+        return self._wd
