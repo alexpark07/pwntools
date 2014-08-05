@@ -12,12 +12,8 @@ Args:
 	allocate_stack(bool)  = True
 </%docstring>
 
-%if type(size) == str:
-	size = int(size)
-%endif
-
 %if allocate_stack:
-	sub sp, ${align(4, size)}
+	sub sp, ${align(4, int(size))}
 %endif
 	mov r0, ${in_fd}
 	mov r2, ${size}

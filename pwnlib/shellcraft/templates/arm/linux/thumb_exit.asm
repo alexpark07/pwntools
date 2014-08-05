@@ -4,5 +4,5 @@
 
 	.code 16
 	subs r0, r0, r0
-	movs r7, #${cpp("SYS_exit", arch = "thumb", os = "linux")}
+	movs r7, ${cpp("SYS_exit", arch = "thumb", os = "linux")}
 	svc 1

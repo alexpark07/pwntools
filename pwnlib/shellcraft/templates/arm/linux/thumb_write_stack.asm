@@ -5,17 +5,13 @@
 Writes a file from stack in thumb mode
 
 Args: 
-	out_fd (imm/reg)   = STDIN_FILENO
-	size (int/str)     = 255
+	out_fd (imm/reg)        = STDIN_FILENO
+	size (int/str/imm/reg)  = 255
 </%docstring>
 
-%if type(size) == str:
-	size = int(size)
-%endif
-
 	.code 16
-	movs r0, #${out_fd}
-	movs r2, #${size}
+	movs r2, ${size}
+	movs r0, ${out_fd}
 	mov r1, sp
-	movs r7, #${cpp("SYS_write", arch = "thumb", os = "linux")}
+	movs r7, ${cpp("SYS_write", arch = "thumb", os = "linux")}
 	svc 1

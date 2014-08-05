@@ -4,11 +4,11 @@
 Writes a file from stack 
 
 Args: 
-	out_fd (imm/reg) = STDIN_FILENO
-	size (int/str)   = 255
+	out_fd (imm/reg)       = STDIN_FILENO
+	size (int/str/imm/reg) = 255
 </%docstring>
 
-	mov r0, ${out_fd}
 	mov r2, ${size}
+	mov r0, ${out_fd}
 	mov r1, sp
 	svc SYS_write
