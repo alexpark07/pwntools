@@ -1,16 +1,18 @@
-import os, string, base64, paramiko, time, tempfile, threading, sys, shutil
+import os, string, base64, paramiko, time, tempfile, threading, sys, shutil, re
 from .. import term, log_levels, log, context
 from ..util import hashes, misc
 from . import sock, tube
 
 
 class ssh_channel(sock.sock):
-    def __init__(self, parent, process = None, tty = False, wd = None, timeout = 'default', log_level = log_levels.INFO):
+    def __init__(self, parent, process = None, tty = False, wd = None, env = None, timeout = 'default', log_level = log_levels.INFO):
         super(ssh_channel, self).__init__(timeout, log_level)
 
         self.returncode = None
         self.host = parent.host
         self.tty  = tty
+
+        env = env or {}
 
         h = log.waitfor('Opening new channel: %r' % (process or 'shell'), log_level = self.log_level)
 
@@ -19,6 +21,12 @@ class ssh_channel(sock.sock):
 
         if process and wd:
             process = "cd %s 2>/dev/null >/dev/null; %s" % (misc.sh_string(wd), process)
+
+        if process and env:
+            for name, value in env.items():
+                if not re.match('^[a-zA-Z_][a-zA-Z0-9_]*$', name):
+                    log.error('run(): Invalid environment key $r' % name)
+                process = '%s=%s %s' % (name, misc.sh_string(value), process)
 
         self.sock = parent.transport.open_session()
         if self.tty:
@@ -91,9 +99,6 @@ class ssh_channel(sock.sock):
         if not self.tty:
             return super(ssh_channel, self).interactive(prompt)
 
-        if not term.term_mode:
-            log.error("interactive() is not possible outside term_mode")
-
         log.info('Switching to interactive mode', log_level = self.log_level)
 
         # Save this to restore later
@@ -125,13 +130,18 @@ class ssh_channel(sock.sock):
         t.start()
 
         while go[0]:
-            try:
-                data = term.key.getraw(0.1)
-            except KeyboardInterrupt:
-                data = [3] # This is ctrl-c
-            except IOError:
-                if go[0]:
-                    raise
+            if term.term_mode:
+                try:
+                    data = term.key.getraw(0.1)
+                except KeyboardInterrupt:
+                    data = [3] # This is ctrl-c
+                except IOError:
+                    if go[0]:
+                        raise
+            else:
+                data = sys.stdin.read(1)
+                if not data:
+                    go[0] = False
 
             if data:
                 try:
@@ -154,9 +164,11 @@ class ssh_channel(sock.sock):
             term.term.on_winch.remove(self.resizer)
         super(ssh_channel, self).close()
 
+    def spawn_process(self, *args, **kwargs):
+        log.error("Cannot use spawn_process on an SSH channel.""")
+
     def _close_msg(self):
         log.info('Closed SSH channel with %s' % self.host, log_level = self.log_level)
-
 
 class ssh_connecter(sock.sock):
     def __init__(self, parent, host, port, timeout = 'default', log_level = log_levels.INFO):
@@ -170,10 +182,13 @@ class ssh_connecter(sock.sock):
         try:
             self.sock = parent.transport.open_channel('direct-tcpip', (host, port), ('127.0.0.1', 0))
         except:
-            h.failed()
+            h.failure()
             raise
 
         h.success()
+
+    def spawn_process(self, *args, **kwargs):
+        log.error("Cannot use spawn_process on an SSH channel.""")
 
     def _close_msg(self):
         log.info("Closed remote connection to %s:%d via SSH connection to %s" % (self.rhost, self.rport, self.host))
@@ -212,9 +227,13 @@ class ssh_listener(sock.sock):
     def _close_msg(self):
         log.info("Closed remote connection to %s:%d via SSH listener on port %d via %s" % (self.rhost, self.rport, self.port, self.host))
 
+    def spawn_process(self, *args, **kwargs):
+        log.error("Cannot use spawn_process on an SSH channel.""")
+
     def wait_for_connection(self):
         """Blocks until a connection has been established."""
-        self.sock
+        _ = self.sock
+        return self
 
     def __getattr__(self, key):
         if key == 'sock':
@@ -250,7 +269,7 @@ class ssh(object):
         self._wd             = None
         misc.mkdir_p(self._cachedir)
 
-        keyfiles = [keyfile] if keyfile else []
+        keyfiles = [os.path.expanduser(keyfile)] if keyfile else []
 
         h = log.waitfor('Connecting to %s on port %d' % (host, port), log_level = self.log_level)
         self.client = paramiko.SSHClient()
@@ -288,10 +307,10 @@ class ssh(object):
 
         Return a :class:`pwnlib.tubes.ssh.ssh_channel` object.
         """
-        return self.run(None, tty, None, timeout, log_level)
+        return self.run(None, tty, timeout = timeout, log_level = log_level)
 
-    def run(self, process, tty = False, wd = 'default', timeout = 'default', log_level = 'default'):
-        """run(process, tty = False, timeout = 'default', log_level = 'default', wd = 'default') -> ssh_channel
+    def run(self, process, tty = False, wd = 'default', env = None, timeout = 'default', log_level = 'default'):
+        """run(process, tty = False, wd = 'default', env = None, timeout = 'default', log_level = 'default') -> ssh_channel
 
         Open a new channel with a specific process inside. If `tty` is True,
         then a TTY is requested on the remote server.
@@ -306,16 +325,16 @@ class ssh(object):
         if wd == 'default':
             wd = self._wd
 
-        return ssh_channel(self, process, tty, wd, timeout, log_level)
+        return ssh_channel(self, process, tty, wd, env, timeout, log_level)
 
-    def run_to_end(self, process, tty = False, wd = 'default'):
-        """run_to_end(process, tty = False, timeout = 'default') -> str
+    def run_to_end(self, process, tty = False, wd = 'default', env = None):
+        """run_to_end(process, tty = False, timeout = 'default', env = None) -> str
 
         Run a command on the remote server and return a tuple with
         (data, exit_status). If `tty` is True, then the command is run inside
         a TTY on the remote server."""
 
-        c = self.run(process, tty, wd, None, 0)
+        c = self.run(process, tty, wd = wd, timeout = None, log_level = 0)
         data = c.recvall()
         retcode = c.poll()
         c.close()
@@ -341,6 +360,52 @@ class ssh(object):
 
         return ssh_listener(self, bind_address, port, timeout, log_level)
 
+    def __getitem__(self, attr):
+        """Permits indexed access to run commands over SSH
+
+        >>> s = ssh(host='bandit.labs.overthewire.org', # doctest: +SKIP
+        ...         user='bandit0',
+        ...         password='bandit0',
+        ...         log_level=0)
+        >>> s['echo hello'] # doctest: +SKIP
+        'hello'
+        """
+        return self.__getattr__(attr)()
+
+    def __getattr__(self, attr):
+        """Permits member access to run commands over SSH
+
+        >>> s = ssh(host='bandit.labs.overthewire.org', # doctest: +SKIP
+        ...         user='bandit0',
+        ...         password='bandit0',
+        ...         log_level=0)
+        >>> s.echo('hello') # doctest: +SKIP
+        'hello'
+        >>> s.whoami() # doctest: +SKIP
+        'bandit0'
+        >>> s.echo(['huh','yay','args']) # doctest: +SKIP
+        'huh yay args'
+        """
+        bad_attrs = [
+            'trait_names',          # ipython tab-complete
+            'download',             # frequent typo
+            'upload',               # frequent typo
+        ]
+
+        if attr in self.__dict__ \
+        or attr in bad_attrs \
+        or attr.startswith('_'):
+            raise AttributeError
+
+        def runner(*args):
+            if len(args) == 1 and isinstance(args[0], (list, tuple)):
+                command = [attr] + args[0]
+            else:
+                command = ' '.join((attr,) + args)
+
+            return self.run(command).recvall().strip()
+        return runner
+
     def connected(self):
         """Returns True if we are connected."""
         return self.client != None
@@ -354,7 +419,7 @@ class ssh(object):
 
     def _libs_remote(self, remote):
         """Return a dictionary of the libraries used by a remote file."""
-        data, status = self.run_to_end('ldd ' + misc.sh_string(remote))
+        data, status = self.run_to_end('ulimit -s unlimited; ldd ' + misc.sh_string(remote))
         if status != 0:
             log.failure('Unable to find libraries for %r' % remote)
             return {}
@@ -363,7 +428,7 @@ class ssh(object):
 
     def _get_fingerprint(self, remote):
         arg = misc.sh_string(remote)
-        cmd = '(sha256sum %s||sha1sum %s||md5sum %s) 2>/dev/null' % (arg, arg, arg)
+        cmd = '(sha256sum %s||sha1sum %s||md5sum %s||shasum %s) 2>/dev/null' % (arg, arg, arg, arg)
         data, status = self.run_to_end(cmd)
         if status == 0:
             return data.split()[0]
@@ -478,7 +543,7 @@ class ssh(object):
 
         s = self.run('cat>' + misc.sh_string(remote), log_level = 0)
         s.send(data)
-        s.shutdown('out')
+        s.shutdown('send')
         s.recvall()
         if s.poll() != 0:
             log.error("Could not upload file %r" % remote)
@@ -504,7 +569,7 @@ class ssh(object):
         log.info("Uploading %r to %r" % (filename,remote))
         self.upload_data(data, remote)
 
-        return remote
+        return misc.parse_ldd_output(remote)
 
     def libs(self, remote, directory = None):
         """Downloads the libraries referred to by a file.
@@ -526,21 +591,18 @@ class ssh(object):
 
         seen = set()
 
-        for lib, remote in libs.items():
-            if not remote or lib == 'linux':
-                continue
-
-            local = os.path.realpath(os.path.join(directory, '.' + os.path.sep + remote))
+        for lib, addr in libs.items():
+            local = os.path.realpath(os.path.join(directory, '.' + os.path.sep + lib))
             if not local.startswith(directory):
-                log.warning('This seems fishy: %r' % remote)
+                log.warning('This seems fishy: %r' % lib)
                 continue
 
             misc.mkdir_p(os.path.dirname(local))
 
-            if remote not in seen:
-                self.download_file(remote, local)
-                seen.add(remote)
-            res[lib] = local
+            if lib not in seen:
+                self.download_file(lib, local)
+                seen.add(lib)
+            res[local] = addr
 
         return res
 

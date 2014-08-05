@@ -1,8 +1,8 @@
 """Exposes functionality for manipulating ELF files
 """
-from . import log
-import mmap, subprocess
-from os.path import abspath
+from . import log, asm
+from .util import misc
+import mmap, subprocess, os
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 from elftools.elf.descriptions import describe_e_type
@@ -46,13 +46,17 @@ class ELF(ELFFile):
 
         super(ELF,self).__init__(self.mmap)
 
-        self.path     = abspath(path)
+        self.path     = os.path.abspath(path)
 
         self._populate_got_plt()
         self._populate_symbols()
         self._populate_libraries()
 
-        self._address  = min(filter(bool, (s.header.p_vaddr for s in self.segments)))
+        if self.elftype == 'DYN':
+            self._address = 0
+        else:
+            self._address = min(filter(bool, (s.header.p_vaddr for s in self.segments)))
+        self.load_addr = self._address
 
         for seg in self.executable_segments:
             if seg.header.p_type == 'PT_GNU_STACK':
@@ -157,7 +161,11 @@ class ELF(ELFFile):
         >>> any(map(lambda x: 'libc' in x, bash.libs.keys()))
         True
         """
-        self.libs = ldd(self.path)
+        try:
+            data = subprocess.check_output('ulimit -s unlimited; ldd ' + misc.sh_string(self.path), shell = True)
+            self.libs = misc.parse_ldd_output(data)
+        except subprocess.CalledProcessError:
+            self.libs = {}
 
     def _populate_symbols(self):
         """
@@ -277,6 +285,9 @@ class ELF(ELFFile):
             >>> bash = ELF('/bin/bash')
             >>> bash.address == bash.offset_to_vaddr(0)
             True
+            >>> bash.address += 0x123456
+            >>> bash.address == bash.offset_to_vaddr(0)
+            True
         """
         for segment in self.segments:
             begin = segment.header.p_offset
@@ -284,7 +295,7 @@ class ELF(ELFFile):
             end   = begin + size
             if begin <= offset and offset <= end:
                 delta = offset - begin
-                return segment.header.p_vaddr + delta
+                return segment.header.p_vaddr + delta + (self.address - self.load_addr)
         return None
 
 
@@ -302,14 +313,21 @@ class ELF(ELFFile):
             >>> bash = ELF('/bin/bash')
             >>> 0 == bash.vaddr_to_offset(bash.address)
             True
+            >>> bash.address += 0x123456
+            >>> 0 == bash.vaddr_to_offset(bash.address)
+            True
         """
+        load_address = address - self.address + self.load_addr
+
         for segment in self.segments:
             begin = segment.header.p_vaddr
             size  = segment.header.p_memsz
             end   = begin + size
-            if begin <= address and address <= end:
-                delta = address - begin
+            if begin <= load_address and load_address <= end:
+                delta = load_address - begin
                 return segment.header.p_offset + delta
+
+        log.warning("Address %#x does not exist in %s" % (address, self.file.name))
         return None
 
     def read(self, address, count):
@@ -399,30 +417,21 @@ class ELF(ELFFile):
         self.stream.seek(old)
         return data
 
+    def disasm(self, address, n_bytes):
+        """Returns a string of disassembled instructions at
+        the specified virtual memory address"""
+        return asm.disasm(self.read(address, n_bytes), vma=address)
 
+    def asm(self, address, assembly):
+        """Assembles the specified instructions and inserts them
+        into the ELF at the specified address.
 
-def ldd(path):
-    """Effectively runs 'ldd' on the specified binary, captures the output,
-    and parses it.  Returns a dictionary of {path: address} for
-    each library required by the specified binary.
+        The resulting binary can be saved with ELF.save()
+        """
+        self.write(address, asm.asm(assembly))
 
-    Args:
-      path(str): Path to the binary
-
-    Example:
-        >>> ldd('/bin/bash').keys()
-        ['/lib/x86_64-linux-gnu/libc.so.6', '/lib/x86_64-linux-gnu/libtinfo.so.5', '/lib/x86_64-linux-gnu/libdl.so.2']
-    """
-    import re
-    expr = re.compile(r'\s(\S?/\S+)\s+\((0x.+)\)')
-    libs = {}
-
-    output = subprocess.check_output([path], env={'LD_TRACE_LOADED_OBJECTS':'1'}).strip().splitlines()
-    output = map(str.strip, output)
-    output = map(expr.search, output)
-
-    for match in filter(None, output):
-        lib, addr = match.groups()
-        libs[lib] = int(addr,16)
-
-    return libs
+    def bss(self, offset):
+        """Returns an index into the .bss segment"""
+        orig_bss = self.get_section_by_name('.bss').header.sh_addr
+        curr_bss = orig_bss - self.load_addr + self.address
+        return curr_bss + offset
