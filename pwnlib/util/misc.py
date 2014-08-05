@@ -1,5 +1,6 @@
 import socket, re, os, stat, errno, string, base64
 from .. import log
+from .packing import u16
 
 def align(alignment, x):
     """align(alignment, x) -> int
@@ -263,3 +264,35 @@ def sh_string(s):
             else:
                 fixed += '\\x%02x' % ord(c)
         return '"$( (echo %s|(base64 -d||openssl enc -d -base64)||echo -en \'%s\') 2>/dev/null)"' % (base64.b64encode(s), fixed)
+
+
+def getdent_to_list(rv):
+	"""parses getdent's struct to human readable.
+	
+		args: 
+			rv (str): getdent's struct included file/directory name(s)
+		return:
+			fn (list): file/directory name(s)
+	"""
+	i  = 0
+	fn = []
+	while 1:
+		inode   = rv[i:i+4]
+		off     = rv[i+4:i+8]
+		st_size = u16(rv[i+8:i+10])
+		fname   = rv[i+10:i+st_size]
+
+		if st_size == 0:
+			break
+		xfname = fname.split('\x00')[0]
+
+		if len(xfname) != 0:
+			fn.append(xfname)
+		i = i + st_size
+		if i == len(rv):
+			break
+		if i > len(rv):
+			# weird but have to exit
+			break
+
+	return fn
