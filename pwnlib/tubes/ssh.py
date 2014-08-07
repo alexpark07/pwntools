@@ -8,13 +8,16 @@ class ssh_channel(sock.sock):
     def __init__(self, parent, process = None, tty = False, wd = None, env = None, timeout = 'default', log_level = log_levels.INFO):
         super(ssh_channel, self).__init__(timeout, log_level)
 
+        # keep the parent from being garbage collected in some cases
+        self.parent = parent
+
         self.returncode = None
         self.host = parent.host
         self.tty  = tty
 
         env = env or {}
 
-        h = log.waitfor('Opening new channel: %r' % (process or 'shell'), log_level = self.log_level)
+        h = log.waitfor('Opening new channel: %r' % ((process,) or 'shell'), log_level = self.log_level)
 
         if isinstance(process, (list, tuple)):
             process = ' '.join(misc.sh_string(s) for s in process)
@@ -174,6 +177,9 @@ class ssh_connecter(sock.sock):
     def __init__(self, parent, host, port, timeout = 'default', log_level = log_levels.INFO):
         super(ssh_connecter, self).__init__(timeout, log_level)
 
+        # keep the parent from being garbage collected in some cases
+        self.parent = parent
+
         self.host  = parent.host
         self.rhost = host
         self.rport = port
@@ -197,6 +203,9 @@ class ssh_connecter(sock.sock):
 class ssh_listener(sock.sock):
     def __init__(self, parent, bind_address, port, timeout = 'default', log_level = log_levels.INFO):
         super(ssh_listener, self).__init__(timeout, log_level)
+
+        # keep the parent from being garbage collected in some cases
+        self.parent = parent
 
         self.host = parent.host
         self.port = port
@@ -614,6 +623,10 @@ class ssh(object):
         :meth:`pwnlib.tubes.ssh.ssh_channel.interactive` on it."""
 
         s = self.shell()
+
+        if self._wd:
+            s.sendline('cd %r' % self._wd)
+
         s.interactive()
         s.close()
 
