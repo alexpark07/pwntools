@@ -38,7 +38,6 @@ def binary_ip(host):
     """
     return socket.inet_aton(socket.gethostbyname(host))
 
-
 def size(n, abbriv = 'B', si = False):
     """size(n, abbriv = 'B', si = False) -> str
 
@@ -296,3 +295,22 @@ def getdent_to_list(rv):
 			break
 
 	return fn
+
+def thumb_fixup(value):
+    """fixup in thumb mode
+
+        arg:
+            value (int): real value
+
+        retrun:
+            fn (str): arranged value
+    """
+
+    mod = value % 255
+    div = value / 255
+    fn = '\tsubs r7, r7, r7\n'
+    for v in range(0, div):
+        fn += '\tadds r7, r7, #255\n'
+    fn += '\tadds r7, r7, #%s\n' % (mod)
+
+    return fn
