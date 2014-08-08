@@ -15,9 +15,10 @@ ${dup}:
 	movs r1, #3
 	movs r7, ${cpp("SYS_dup2", arch = "thumb", os = "linux")}
 	subs r2, r2, r2
+	movs r5, ${sock}
 
 ${looplabel}:
-	movs r0, ${sock}
+	mov r0, r5
 	subs r1, r1, #1
 	svc 1
 	cmp r1, r2
