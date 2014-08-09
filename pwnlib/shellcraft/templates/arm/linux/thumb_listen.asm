@@ -1,5 +1,5 @@
 <% from pwnlib.shellcraft import arm, common %>
-<% from pwnlib.util.misc import binary_ip, arm_fixup %>
+<% from pwnlib.util.misc import binary_ip, thumb_fixup %>
 <% from pwnlib.util.packing import u32 %>
 <% from pwnlib.asm import cpp %>
 <% from socket import htons %>
@@ -19,7 +19,7 @@
     movs r0, AF_INET
     movs r1, SOCK_STREAM
     subs r2, r2, r2
-    ${arm_fixup(eval(cpp("SYS_socket", arch = "thumb", os = "linux")))}
+    ${thumb_fixup(eval(cpp("SYS_socket", arch = "thumb", os = "linux")))}
     svc 1
 
     mov r6, r0
@@ -30,7 +30,7 @@
     mov r0, r6
     mov r1, sp
     movs r2, #16
-    ${arm_fixup(eval(cpp("SYS_bind", arch = "thumb", os = "linux")))}
+    ${thumb_fixup(eval(cpp("SYS_bind", arch = "thumb", os = "linux")))}
     svc 1
 
     b ${after_sockaddr_in}
@@ -42,11 +42,11 @@ ${sockaddr_in}:
 ${after_sockaddr_in}:
     movs r1, #16
     mov r0, r6
-    ${arm_fixup(eval(cpp("SYS_listen", arch = "thumb", os = "linux")))}
+    ${thumb_fixup(eval(cpp("SYS_listen", arch = "thumb", os = "linux")))}
     svc 1
 
     mov r0, r6
     subs r1, r1, r1
     subs r2, r2, r2
-    ${arm_fixup(eval(cpp("SYS_accept", arch = "thumb", os = "linux")))}
+    ${thumb_fixup(eval(cpp("SYS_accept", arch = "thumb", os = "linux")))}
     svc 1
