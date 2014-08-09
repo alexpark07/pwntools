@@ -296,21 +296,38 @@ def getdent_to_list(rv):
 
 	return fn
 
-def thumb_fixup(value):
-    """fixup in thumb mode
+def arm_fixup(value):
+    """fixup 
 
         arg:
             value (int): real value
 
         retrun:
             fn (str): arranged value
-    """
+	"""
 
-    mod = value % 255
-    div = value / 255
-    fn = '\tsubs r7, r7, r7\n'
-    for v in range(0, div):
-        fn += '\tadds r7, r7, #255\n'
-    fn += '\tadds r7, r7, #%s\n' % (mod)
+    if value < (2<<7):
+		return "\tadd r7, r7, #%s" % (value)
 
-    return fn
+    fn = []
+    fn.append('\tsub r7, r7, r7')
+    rv = value
+    end = False
+
+    if rv > 2<<14:
+        fn.append('\tadd r7, r7, #%s' % (2<<14))
+        rv = rv - 2<<14
+
+    while end == False:
+		for comp in [2<<7, 2<<8, 2<<9, 2<<10, 2<<11, 2<<12, 2<<13, 2<<14]:
+			if rv < comp:
+				break
+			
+		if comp == (2<<7):
+			fn.append('\tadds r7, r7, #%s' % (rv))
+			break
+		else:
+			fn.append('\tadds r7, r7, #%s' % ((comp)>>1))
+			rv = rv - ( (comp) >> 1 )
+
+    return '\n'.join(fn)
