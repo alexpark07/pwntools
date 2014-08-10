@@ -354,3 +354,51 @@ def arm_fixup(value):
 			rv = rv - ( (comp) >> 1 )
 
     return '\n'.join(fn)
+
+def findXorKey(sc, bc=['\x00', '\x0a']):
+	"""find XOR key to scramble and to avoid all of bad chars such as 0x00
+		arg:
+			sc (str): shellcode
+			bc (list): bad chars to avoid
+
+		return:
+			key (int): XOR key
+
+		Examples:
+		    >>> print findXorKey(sc)
+			2
+	"""
+	size = len(sc)
+	bcs  = bc
+	for i in range(0x01, 0xFF+1):
+		key = i
+		for s in sc:
+			x = (ord(s) ^ i)
+			if chr(x) in bcs:
+				#print "XXX: ", repr(chr(x)), repr(bcs)
+				key = -1
+				break
+		if key != -1:
+			return key
+	return -1
+
+
+def encodeShellcode(sc, key):
+	"""encodes shellcode with key to avoid all of bad chars such as 0x00
+		arg:
+			sc (str)     : shellcode
+			key (int/str): XOR key
+
+		return:
+			xoredSC (str): XORed Shellcode
+
+		Examples:
+		    >>> print encodeShellcode(sc, findXorKey(sc))
+			'\x0e\x02\x8d\xe0\x02"\xa2\xe1\x07\x02/\xeb\x0f\x12\xa2\xe3\t\x02\x92\xed-`kl-qj\x02'
+	"""
+
+	xsc = ''
+	for i in range(0, len(sc)):
+		xsc += chr( ord(sc[i]) ^ key )
+	
+	return xsc
