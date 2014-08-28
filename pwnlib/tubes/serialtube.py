@@ -1,4 +1,4 @@
-from .. import log, log_levels, term
+from .. import log, term
 from . import tube
 import serial, time, threading, sys
 
@@ -8,8 +8,8 @@ class serialtube(tube.tube):
             convert_newlines = True,
             bytesize = 8, parity='N', stopbits=1, xonxoff = False,
             rtscts = False, dsrdtr = False,
-            timeout = 'default', log_level = log_levels.INFO):
-        super(serialtube, self).__init__(timeout, log_level)
+            timeout = 'default'):
+        super(serialtube, self).__init__(timeout)
 
         self.convert_newlines = convert_newlines
         self.conn = serial.Serial(
@@ -18,31 +18,41 @@ class serialtube(tube.tube):
             bytesize = 8,
             parity = 'N',
             stopbits = 1,
-            timeout = 0.001,
+            timeout = 0,
             xonxoff = False,
             rtscts = False,
-            writeTimeout = 0.001,
+            writeTimeout = None,
             dsrdtr = False,
-            interCharTimeout = 0.001
+            interCharTimeout = 0
         )
 
     # Implementation of the methods required for tube
     def recv_raw(self, numb):
+        if not self.conn:
+            raise EOFError
+
         if self.timeout == None:
-            end = time.time() + 100000000
+            end = float('inf')
         else:
             end = time.time() + self.timeout
 
-        while end > time.time():
+        while True:
             data = self.conn.read(numb)
             if data:
                 return data
+
+            delta = end - time.time()
+            if delta <= 0:
+                break
             else:
-                time.sleep(0.1)
+                time.sleep(min(delta, 0.1))
 
         return None
 
     def send_raw(self, data):
+        if not self.conn:
+            raise EOFError
+
         if self.convert_newlines:
             data = data.replace('\n', '\r\n')
 
@@ -55,10 +65,14 @@ class serialtube(tube.tube):
         pass
 
     def can_recv_raw(self, timeout):
-        return self.conn.inWaiting() > 0
+        end = time.time()
+        while time.time() < end:
+            if self.conn.inWaiting():
+                return True
+        return False
 
     def connected_raw(self, direction):
-        return True
+        return self.conn != None
 
     def close(self):
         if self.conn:
@@ -75,11 +89,7 @@ class serialtube(tube.tube):
         self.close()
 
     def interactive(self, prompt = term.text.bold_red('$') + ' '):
-        log.info('Switching to interactive mode', log_level = self.log_level)
-
-        # Save this to restore later
-        debug_log_level = self.debug_log_level
-        self.debug_log_level = 0
+        log.info('Switching to interactive mode')
 
         # We would like a cursor, please!
         term.term.show_cursor()
@@ -97,7 +107,7 @@ class serialtube(tube.tube):
                     sys.stdout.write(cur)
                     sys.stdout.flush()
                 except EOFError:
-                    log.info('Got EOF while reading in interactive', log_level = self.log_level)
+                    log.info('Got EOF while reading in interactive')
                     go[0] = False
                     break
 
@@ -122,12 +132,10 @@ class serialtube(tube.tube):
                     self.send(''.join(chr(c) for c in data))
                 except EOFError:
                     go[0] = False
-                    log.info('Got EOF while sending in interactive',
-                             log_level = self.log_level)
+                    log.info('Got EOF while sending in interactive')
 
         while t.is_alive():
             t.join(timeout = 0.1)
 
         # Restore
-        self.debug_log_level = debug_log_level
         term.term.hide_cursor()

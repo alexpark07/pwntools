@@ -1,3 +1,5 @@
+"""Return Oriented Programming
+"""
 import hashlib, os, sys, tempfile, re
 
 from . import context, log, elf
@@ -5,11 +7,28 @@ from .util import packing, lists
 
 try:
     import ropgadget
-    ok = True
+    __ok = True
 except ImportError:
-    ok = False
+    __ok = False
 
 class ROP(object):
+    """Class which simplifies the generation of ROP-chains.
+
+    Example:
+
+    .. code-block:: python
+
+       elf = ELF('ropasaurusrex')
+       rop = ROP(elf)
+       rop.read(0, elf.bss(0x80))
+       rop.dump()
+       # ['0x0000:        0x80482fc (read)',
+       #  '0x0004:       0xdeadbeef',
+       #  '0x0008:              0x0',
+       #  '0x000c:        0x80496a8']
+       str(rop)
+       # '\\xfc\\x82\\x04\\x08\\xef\\xbe\\xad\\xde\\x00\\x00\\x00\\x00\\xa8\\x96\\x04\\x08'
+    """
     def __init__(self, elfs, base = None):
         """
         Args:
@@ -75,7 +94,12 @@ class ROP(object):
             if isinstance(value, unicode):
                 value = value.encode('utf8')
 
-            output.append([value + '\x00'])
+            while True:
+                value += '\x00'
+                if len(value) % self.align == 0:
+                    break
+
+            output.append([value])
             return (next_index,)
         elif isinstance(value, (tuple, list)):
             l = []
@@ -175,17 +199,17 @@ class ROP(object):
         # Use the architecture specific builder to get a [[str/ints/refs]]
         meth = '_build_' + self.elfs[0].get_machine_arch()
         if not hasattr(self, meth):
-            log.error("Cannot build rop for architecture %r" % self.get_machine_arch())
+            log.error("Cannot build rop for architecture %r" % self.elfs[0].get_machine_arch())
         rop = getattr(self, meth)()
 
         # Stage 1
         #   Generate a dictionary {ref_id: addr}.
         addrs = {}
-        if self.base != None:
-            addr = self.base
+        if base != None:
+            addr = base
             for i, l in enumerate(rop):
                 addrs[i] = addr
-                for v in enumerate(l):
+                for v in l:
                     if isinstance(v, (int, long, tuple)):
                         addr += self.align
                     else:
@@ -375,9 +399,19 @@ class ROP(object):
 
         #
         # Currently, ropgadget.args.Args() doesn't take any arguments, and pulls
-        # only from sys.argv.  Preserve it through this call.
+        # only from sys.argv.  Preserve it through this call.  We also
+        # monkey-patch sys.stdout to suppress output from ropgadget.
         #
         argv    = sys.argv
+        stdout  = sys.stdout
+        class Wrapper:
+            def __init__(self, fd):
+                self._fd = fd
+            def write(self, s):
+                pass
+            def __getattr__(self, k):
+                return self._fd.__getattribute__(k)
+        sys.stdout = Wrapper(sys.stdout)
         gadgets = {}
         try:
             for elf in self.elfs:
@@ -397,14 +431,15 @@ class ROP(object):
                 for gadget in core._Core__gadgets:
 
                     address = gadget['vaddr'] - elf.load_addr + elf.address
-                    insns   = map(str.strip, gadget['gadget'].split(';'))
+                    insns   = [g.strip() for g in gadget['gadget'].split(';')]
 
                     if all(map(valid, insns)):
                         elf_gadgets[address] = insns
                 self.__cache_save(elf, elf_gadgets)
                 gadgets.update(elf_gadgets)
         finally:
-            sys.argv = argv
+            sys.argv   = argv
+            sys.stdout = stdout
 
 
         #
@@ -496,8 +531,11 @@ class ROP(object):
 
     def __getattr__(self, attr):
         """Helper to make finding ROP gadets easier.
+
         Also provides a shorthand for .call():
+            ```
             rop.function(args) ==> rop.call(function, args)
+            ```
 
         >>> elf=ELF('/bin/bash')
         >>> rop=ROP([elf])
@@ -549,6 +587,6 @@ class ROP(object):
         return call
 
 
-if not ok:
+if not __ok:
     def ROP(*args, **kwargs):
         log.error("ROP is not supported without installing libcapstone. See http://www.capstone-engine.org/download.html")
